@@ -1,0 +1,77 @@
+#pragma once
+
+#include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/Time.h>
+
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
+
+// Deliberate faults for testing a crash reporter end to end: each one breaks
+// the calling process for real, on the main thread or on a background thread.
+// For demo and test apps only.
+namespace eacp::CrashReporting::Faults
+{
+enum class ThreadChoice
+{
+    main,
+    background
+};
+
+std::string_view getThreadChoiceName(ThreadChoice choice);
+std::optional<ThreadChoice> findThreadChoice(std::string_view name);
+
+struct Fault
+{
+    std::string_view name;
+    std::string_view label;
+    std::string_view description;
+    std::function<void()> trigger = [] {};
+
+    // Stalls its thread rather than crashing: a hang, a spin, a deadlock.
+    bool stallsItsThread = false;
+
+    // False where the platform cannot raise it: __fastfail is Windows-only,
+    // and an integer divide by zero does not trap on arm64 macOS.
+    bool isAvailable = true;
+};
+
+// Every fault, available here or not.
+const Vector<Fault>& listFaults();
+
+std::optional<std::reference_wrapper<const Fault>> findFault(std::string_view name);
+
+// How long the hang fault sleeps its thread for.
+void setHangDuration(Time::MS duration);
+Time::MS getHangDuration();
+
+// The name every background fault thread is watched under, so a stall on
+// one is reported as a hang of that thread.
+constexpr auto backgroundWatchName = std::string_view {"fault background"};
+
+// Pauses a background fault thread's watch around its fault, as
+// pauseHangDetection does the main thread's.
+void setPausesBackgroundWatch(bool shouldPause);
+
+// Raises the fault now: `main` on the calling thread, which should be the
+// main one; `background` on a fresh watched thread that is never joined, and
+// returns at once. False when there is no such fault or it is unavailable here.
+bool triggerFault(std::string_view name, ThreadChoice thread);
+
+// triggerFault from an event-loop callback `delay` from now. False as above.
+bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay);
+
+// Two helpers that call CrashReporting::captureMessage and captureException,
+// which report something without crashing, so SelfDestruct and the tests can
+// trigger an event report the way they trigger a fault; the app keeps running.
+// Each returns the report's id, or empty if none was written.
+constexpr auto faultEventMessage =
+    std::string_view {"the crash fault reported this"};
+std::string reportMessageEvent();
+std::string reportCaughtException();
+
+// Ends the crash handler process, so the next crash finds no handler, goes
+// unreported, and the next launch's CrashHandler::unreportedExit sees it.
+void killHandlerProcess();
+} // namespace eacp::CrashReporting::Faults

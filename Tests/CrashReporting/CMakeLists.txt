@@ -1,0 +1,50 @@
+nano_add_executable(CrashReportTests
+        SOURCES CrashReportTests.cpp ReportDatabaseTests.cpp
+        TARGETS eacp-crash-report)
+
+if (NOT TARGET eacp-crash-faults)
+    return ()
+endif ()
+
+# The fault cases relaunch this binary with --crashing-process, which crashes
+# for real, and read the report its handler wrote.
+nano_add_executable(CrashReportingTests
+        NO_MAIN
+        SOURCES TestMain.cpp CrashingProcess.cpp ThreadStackProbe.cpp
+                PendingReportsTests.cpp FaultReportTests.cpp FaultsTests.cpp
+                StackOverflowTests.cpp LoadedLibraryTests.cpp
+                EventTests.cpp WorkerHangTests.cpp
+        TARGETS eacp-crash-faults)
+eacp_enable_crash_reporting(CrashReportingTests)
+
+# Runs the real start() over a database the tests fill, to see when
+# pendingReportFound is delivered.
+add_executable(PendingReportsProbe PendingReportsProbe/Main.cpp)
+eacp_enable_crash_reporting(PendingReportsProbe)
+target_compile_definitions(CrashReportingTests PRIVATE
+        EACP_PENDING_REPORTS_PROBE="$<TARGET_FILE:PendingReportsProbe>")
+add_dependencies(CrashReportingTests PendingReportsProbe)
+
+# Test-only: a library the crashing process loads at runtime and crashes in.
+add_subdirectory(CrashingLibrary)
+target_compile_definitions(CrashReportingTests PRIVATE
+        EACP_CRASHING_LIBRARY="$<TARGET_FILE:CrashingLibrary>")
+add_dependencies(CrashReportingTests CrashingLibrary)
+
+# Every crashing process adds the same HKCU registry entry for the Windows
+# Error Reporting helper DLL beside this binary, and some groups remove it, so
+# every group that starts one runs one at a time: else one removes it while
+# another crashes. The timeout makes a stuck child a failure with its output
+# rather than a job that runs until CI cancels it.
+if (WIN32)
+    set(wer_lock_file "${CMAKE_CURRENT_BINARY_DIR}/WerSerialisation.cmake")
+    set(crash_group_timeout_seconds 600)
+
+    file(WRITE "${wer_lock_file}"
+            "set_tests_properties(CrashReport CrashReporting CrashEvent StackOverflow\n"
+            "        PROPERTIES RESOURCE_LOCK eacp-wer-module-listing\n"
+            "        TIMEOUT ${crash_group_timeout_seconds})\n")
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${wer_lock_file}")
+endif ()

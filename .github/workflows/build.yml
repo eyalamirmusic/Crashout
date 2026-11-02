@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            cache-key: macos
+            cmake-flags: ''
+          # Only eacp-crash-report and its tests build on Linux, which need
+          # eacp-core alone.
+          - name: Linux GCC
+            os: ubuntu-latest
+            cache-key: linux-gcc
+            cmake-flags: '-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DEACP_BUILD_GRAPHICS=OFF'
+          - name: Windows MSVC
+            os: windows-latest
+            cache-key: windows-msvc-x64
+            msvc-arch: x64
+            cmake-flags: ''
+          - name: Windows Clang
+            os: windows-latest
+            cache-key: windows-clang-x64
+            msvc-arch: x64
+            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+          - name: Windows MSVC ARM64
+            os: windows-11-arm
+            cache-key: windows-msvc-arm64
+            msvc-arch: arm64
+            cmake-flags: ''
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CCACHE_DEPEND: '1'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up the compiler cache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: ${{ matrix.cache-key }}
+          max-size: 1G
+          evict-old-files: job
+          install: ${{ runner.os == 'Windows' && 'binary' || 'detect' }}
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc # v2
+        with:
+          arch: ${{ matrix.msvc-arch }}
+
+      - name: Configure
+        run: >
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
+          -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ${{ runner.os == 'macOS' && '-DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
+          ${{ runner.os == 'Windows' && '-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded' || '' }}
+          ${{ matrix.cmake-flags }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+
+      # A test binary that crashes on macOS logs only its signal; the stack is
+      # in the report ReportCrash writes, so a failed lane keeps those.
+      - name: Upload macOS crash reports
+        if: failure() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-reports-macos
+          path: |
+            ~/Library/Logs/DiagnosticReports/*.ips
+            ~/Library/Logs/DiagnosticReports/*.crash
+          if-no-files-found: warn

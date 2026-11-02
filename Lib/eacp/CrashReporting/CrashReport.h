@@ -1,0 +1,224 @@
+#pragma once
+
+#include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/FilePath.h>
+
+#include <Miro/Reflect.h>
+
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+
+namespace eacp::CrashReporting
+{
+// One return address on the crashed thread, as the module it falls in and the
+// distance into it, which stays meaningful across runs and machines where the
+// absolute address does not.
+struct StackFrame
+{
+    std::string modulePath;
+    std::uint64_t moduleBase = 0;
+    std::uint64_t offset = 0;
+
+    // Empty when nothing resolved it.
+    std::string symbol;
+
+    // The key a symbol server finds the image's symbols by: the Mach-O LC_UUID
+    // on macOS, the PDB's GUID and age on Windows. Empty
+    // where it was not read.
+    std::string moduleUuid;
+
+    std::uint64_t getAddress() const { return moduleBase + offset; }
+
+    void reflect(Miro::Reflector& ref);
+};
+
+struct CrashedThread
+{
+    std::uint64_t threadId = 0;
+
+    // A watched thread's name, for a hang; empty for a crash.
+    std::string name;
+    Vector<StackFrame> frames;
+
+    void reflect(Miro::Reflector& ref);
+};
+
+// Who wrote the report: the handler process reading the crashed one from
+// outside, the handler on macOS from the kernel's Mach exception message with
+// the app suspended, the handler again after the app was gone with only its
+// exit code to go on, the app itself for a handled event (captureMessage,
+// captureException), or nobody, for a folder a crash left without its
+// report.json.
+enum class CaptureSource
+{
+    handler,
+    handlerMach,
+    exitCode,
+    app,
+    incomplete
+};
+
+std::string_view getCaptureSourceName(CaptureSource source);
+std::optional<CaptureSource> findCaptureSource(std::string_view name);
+
+constexpr auto incompleteReason = "incomplete";
+constexpr auto hangReason = "Hang";
+
+constexpr auto messageEventReason = "Message";
+constexpr auto exceptionEventReason = "Exception";
+
+// A crash ended the app. A hang is a watched thread (the main one, or one that
+// has called sendHeartbeat) that stopped sending heartbeats. An event is one the
+// app reported itself (captureMessage, captureException). After a hang or an
+// event the app is still running.
+enum class ReportKind
+{
+    crash,
+    hang,
+    event
+};
+
+std::string_view getReportKindName(ReportKind kind);
+std::optional<ReportKind> findReportKind(std::string_view name);
+
+enum class Level
+{
+    debug,
+    info,
+    warning,
+    error,
+    fatal
+};
+
+std::string_view getLevelName(Level level);
+std::optional<Level> findLevel(std::string_view name);
+
+// Who was using the app, as setUser gave it. All empty when none was set.
+struct User
+{
+    std::string id;
+    std::string email;
+    std::string username;
+
+    MIRO_REFLECT(id, email, username)
+};
+
+struct Breadcrumb
+{
+    std::string category;
+    std::string message;
+    Level level = Level::info;
+
+    // Milliseconds since the Unix epoch, UTC, stamped by addBreadcrumb.
+    std::int64_t timestamp = 0;
+
+    void reflect(Miro::Reflector& ref);
+};
+
+struct CrashReport
+{
+    // A UUID, and the name of the report's folder.
+    std::string id;
+
+    ReportKind kind = ReportKind::crash;
+
+    // An event's own level; fatal for a crash or a hang.
+    Level level = Level::fatal;
+
+    // Milliseconds since the Unix epoch, UTC.
+    std::int64_t timestamp = 0;
+
+    // The platform's own name for what happened: EXC_BAD_ACCESS, SIGABRT,
+    // EXCEPTION_ACCESS_VIOLATION, std::terminate, incomplete.
+    std::string reason;
+
+    // What the crash said about itself: an uncaught exception's type and what(),
+    // an NSException's name and reason. Often empty.
+    std::string message;
+
+    std::uint64_t faultAddress = 0;
+
+    // For a hang, the first stalled thread; its frames are where it was stuck. For an
+    // uncaught C++ exception whose throw was recorded, the throw site.
+    CrashedThread crashingThread;
+
+    // Where std::terminate ended the thread, when crashingThread holds the
+    // throw site instead. Empty otherwise.
+    Vector<StackFrame> terminateFrames;
+
+    // How long the first stalled thread had been silent when it was sampled,
+    // for a hang. 0 for a crash.
+    std::int64_t hangDurationMilliseconds = 0;
+
+    // For a hang, the stalled thread's name as the OS knows it ("main" for the
+    // main thread). Empty for a crash.
+    std::string threadName;
+
+    // In a hang report, every watched thread that had stopped sending heartbeats
+    // when the hang was detected, each with its stack; the first is also
+    // crashingThread. Two threads deadlocked on each other appear here together.
+    Vector<CrashedThread> stalledThreads;
+
+    // Empty for an event, for a macOS crash caught only by the in-app signal
+    // handler (captureMachExceptions off or its handshake failed), and when
+    // writing the minidump failed.
+    FilePath minidumpPath;
+
+    // The module's own keys: appName, appVersion, os, release, environment,
+    // dist.
+    std::map<std::string, std::string> metadata;
+
+    // What the app set with setTag and setExtra.
+    std::map<std::string, std::string> tags;
+    std::map<std::string, std::string> extra;
+
+    User user;
+
+    // Oldest first.
+    Vector<Breadcrumb> breadcrumbs;
+
+    Vector<FilePath> attachments;
+
+    // "macOS" or "Windows".
+    std::string platform;
+
+    CaptureSource capturedBy = CaptureSource::handler;
+
+    // The folder the report lives in, filled in when it is read back. Not
+    // stored, since the folder moves when the report is marked handled.
+    FilePath folder;
+
+    std::string toJSON() const;
+    static std::optional<CrashReport> fromJSON(std::string_view text);
+
+    // The report.json shape, which Miro::toJSON gives any consumer too:
+    // addresses and thread ids as hex strings, enums by name, paths as text,
+    // and folder left out.
+    void reflect(Miro::Reflector& ref);
+};
+
+// One run of the app, as the session marker start() writes records it: the
+// marker is removed by a clean exit, so one found at the next start() is a run
+// that ended without one.
+struct AppSession
+{
+    std::uint64_t processId = 0;
+
+    // Milliseconds since the Unix epoch, and the same as ISO 8601 for people.
+    std::int64_t startTime = 0;
+    std::string startTimeText;
+
+    std::string toJSON() const;
+    static std::optional<AppSession> fromJSON(std::string_view text);
+
+    MIRO_REFLECT(processId, startTime, startTimeText)
+};
+
+// Addresses go through JSON as strings, because a JSON number is a double and
+// loses the low bits of anything above 2^53.
+std::string formatHexAddress(std::uint64_t address);
+std::optional<std::uint64_t> parseHexAddress(std::string_view text);
+} // namespace eacp::CrashReporting
