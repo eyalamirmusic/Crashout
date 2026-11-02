@@ -12,10 +12,10 @@ Linux included, so a service can read the reports with the same structs.
 The namespace and include paths are eacp's: `eacp::CrashReporting`,
 `<eacp/CrashReporting/CrashReporting.h>`.
 
-Until eyalamirmusic/eacp `jp/remove-crash-reporting` (stacked on #196) merges,
-Crashout needs eacp at that branch: #196 adds Core pieces the library uses,
-and the stacked PR removes eacp's own copy of crash reporting, whose targets
-have the same names.
+Until eyalamirmusic/eacp #196 and #197 merge, Crashout pins eacp's
+`jp/crashout-eacp-base`, a merge of the two: #196 adds Core pieces the library
+uses, and #197 removes eacp's own copy of crash reporting, whose targets have
+the same names. Once both merge, the pin moves to develop.
 
 ## Using it
 
