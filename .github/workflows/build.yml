@@ -16,8 +16,8 @@ jobs:
             os: macos-latest
             cache-key: macos
             cmake-flags: ''
-          # Only eacp-crash-report and its tests build on Linux, which need
-          # eacp-core alone.
+          # No graphics: the demo app is left out and the library and its
+          # tests need eacp-core alone.
           - name: Linux GCC
             os: ubuntu-latest
             cache-key: linux-gcc

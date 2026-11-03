@@ -16,7 +16,7 @@
 #include <eacp/Core/Utils/WinInclude.h>
 #include <float.h>
 #include <intrin.h>
-#elif defined(__APPLE__)
+#else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
