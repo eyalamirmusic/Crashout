@@ -60,7 +60,8 @@ volatile auto shouldKeepRecursing = true;
 
 EACP_FAULT_NO_INLINE void dereferenceNullPointer()
 {
-    auto* volatile target = static_cast<int*>(nullptr);
+    // The int is volatile too: GCC drops a plain store through a null pointer.
+    auto* volatile target = static_cast<volatile int*>(nullptr);
     *target = 1;
 }
 
