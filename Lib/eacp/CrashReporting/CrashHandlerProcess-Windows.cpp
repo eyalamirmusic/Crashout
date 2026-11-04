@@ -155,6 +155,29 @@ std::optional<CONTEXT> readCrashContext(HANDLE process, const SharedCrashInfo& c
     return readAppMemory<CONTEXT>(process, contextAddress);
 }
 
+std::optional<EXCEPTION_RECORD> readExceptionRecord(HANDLE process,
+                                                    const SharedCrashInfo& crash)
+{
+    auto pointers =
+        readAppMemory<EXCEPTION_POINTERS>(process, crash.exceptionPointersAddress);
+
+    if (!pointers)
+        return std::nullopt;
+
+    auto recordAddress = reinterpret_cast<std::uintptr_t>(pointers->ExceptionRecord);
+    return readAppMemory<EXCEPTION_RECORD>(process, recordAddress);
+}
+
+std::string describeException(HANDLE process, const SharedCrashInfo& crash)
+{
+    auto record = readExceptionRecord(process, crash);
+
+    if (!record)
+        return {};
+
+    return describeAccessViolation(*record).value_or(std::string {});
+}
+
 // With no exception (a hang) the dump is of the threads as they are.
 bool writeMinidump(HANDLE process,
                    const SharedState& state,
@@ -411,6 +434,10 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
     // reason is named from it here.
     if (report.reason.empty())
         report.reason = describeExitCode(static_cast<DWORD>(state.crash.code));
+
+    if (report.message.empty())
+        report.message = describeException(connection.appProcess, state.crash);
+
     auto minidumpPath = report.folder / minidumpFileName;
 
     if (writeMinidump(connection.appProcess, state, minidumpPath, true))
@@ -500,6 +527,7 @@ int handleAppExit(const ReportDatabase& database, const AppConnection& connectio
     const auto& state = connection.state->get();
     auto report = beginHandlerReport(database, state, CaptureSource::exitCode);
     report.reason = describeExitCode(exitCode);
+    report.message = "exited with code " + formatHexAddress(exitCode);
     finishHandlerReport(database, report, state);
 
     return deliverReportInHandler(report);

@@ -782,6 +782,15 @@ auto tCrashReportModuleUuid = test("CrashReport/framesCarryModuleUuids") = []
         crashTheCrashingProcess("nullptr", FaultThread::main)));
 };
 
+#if defined(_WIN32)
+auto tCrashReportAccessViolationMessage =
+    test("CrashReport/accessViolationMessageNamesTheAccess") = []
+{
+    auto report = crashTheCrashingProcess("nullptr", FaultThread::main);
+    check(report.message == "write to address 0x0");
+};
+#endif
+
 auto tCrashReportThreadEntry =
     test("CrashReport/backgroundFramesReachTheThreadEntry") = []
 {
