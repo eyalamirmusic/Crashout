@@ -7,11 +7,16 @@
 #include <optional>
 
 // The exchange that gives the handler the app's task port. The app spawns the
-// handler with a send right to a port of its own as the handler's bootstrap
-// port; the handler sends back a send right to its exception port, and the
-// app answers with its task port and its real bootstrap port.
+// handler with a send right to a port of its own as the handler's exception
+// port for an exception nothing raises; the handler takes it and clears it,
+// sends back a send right to its exception port, and the app answers with its
+// task port. The bootstrap port is never borrowed: libxpc keeps the one it saw
+// at process start, so a handler started on another port can never reach
+// launchd services, and NSURLSession then fails every host lookup.
 namespace eacp::CrashReporting::Detail
 {
+constexpr auto handshakeCarrierExceptionMask = exception_mask_t {EXC_MASK_RPC_ALERT};
+
 struct HandshakePort
 {
     mach_port_t receiveRight = MACH_PORT_NULL;
@@ -37,7 +42,7 @@ struct HandlerMachPorts
 
 // The handler's half, in two steps around its ready byte, so the wait for
 // the app's answer never delays the app's start. Only on the channel that
-// says the bootstrap port is the handshake port.
+// says the handshake port was passed.
 struct PendingTaskPortRequest
 {
     mach_port_t exceptionPort = MACH_PORT_NULL;

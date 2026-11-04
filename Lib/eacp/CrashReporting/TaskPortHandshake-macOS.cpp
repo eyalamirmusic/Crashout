@@ -40,7 +40,6 @@ struct HandshakeReply
     mach_msg_header_t header;
     mach_msg_body_t body;
     mach_msg_port_descriptor_t appTask;
-    mach_msg_port_descriptor_t appBootstrap;
 };
 
 struct ReceivedHandshakeReply
@@ -104,8 +103,7 @@ bool isHandshakeRequest(const HandshakeRequest& request)
            && request.body.msgh_descriptor_count == 1;
 }
 
-// Anything else that reaches the port, such as a lookup the child's runtime
-// makes before it has its real bootstrap port, is dropped.
+// Anything else that reaches the port is dropped.
 std::optional<HandshakeRequest> receiveHandshakeRequest(const HandshakePort& port,
                                                         Time::MS timeout)
 {
@@ -168,9 +166,8 @@ bool sendTaskPortReply(mach_port_t replyPort)
     reply.header.msgh_size = sizeof(reply);
     reply.header.msgh_remote_port = replyPort;
     reply.header.msgh_id = handshakeReplyId;
-    reply.body.msgh_descriptor_count = 2;
+    reply.body.msgh_descriptor_count = 1;
     reply.appTask = makePortDescriptor(::mach_task_self(), MACH_MSG_TYPE_COPY_SEND);
-    reply.appBootstrap = makePortDescriptor(bootstrap_port, MACH_MSG_TYPE_COPY_SEND);
 
     return ::mach_msg(&reply.header,
                       MACH_SEND_MSG,
@@ -182,13 +179,28 @@ bool sendTaskPortReply(mach_port_t replyPort)
            == MACH_MSG_SUCCESS;
 }
 
-std::optional<mach_port_t> getInheritedHandshakePort()
+std::optional<mach_port_t> takeInheritedHandshakePort()
 {
+    auto count = mach_msg_type_number_t {1};
+    auto mask = exception_mask_t {};
     auto port = mach_port_t {MACH_PORT_NULL};
-    auto result =
-        ::task_get_special_port(::mach_task_self(), TASK_BOOTSTRAP_PORT, &port);
+    auto behavior = exception_behavior_t {};
+    auto flavor = thread_state_flavor_t {};
+    auto result = ::task_get_exception_ports(::mach_task_self(),
+                                             handshakeCarrierExceptionMask,
+                                             &mask,
+                                             &count,
+                                             &port,
+                                             &behavior,
+                                             &flavor);
 
-    if (result != KERN_SUCCESS || port == MACH_PORT_NULL)
+    ::task_set_exception_ports(::mach_task_self(),
+                               handshakeCarrierExceptionMask,
+                               MACH_PORT_NULL,
+                               EXCEPTION_DEFAULT,
+                               THREAD_STATE_NONE);
+
+    if (result != KERN_SUCCESS || count == 0 || !MACH_PORT_VALID(port))
         return std::nullopt;
 
     return port;
@@ -238,21 +250,13 @@ std::optional<HandshakeReply> receiveHandshakeReply(mach_port_t replyPort,
     const auto& reply = received.reply;
 
     if (reply.header.msgh_id != handshakeReplyId
-        || reply.body.msgh_descriptor_count != 2)
+        || reply.body.msgh_descriptor_count != 1)
     {
         ::mach_msg_destroy(&received.reply.header);
         return std::nullopt;
     }
 
     return reply;
-}
-
-// launchd's port, which the app passed back, so the handler's own lookups
-// (an uploader's network calls) work as in any other process.
-void restoreBootstrapPort(mach_port_t appBootstrap)
-{
-    ::task_set_special_port(::mach_task_self(), TASK_BOOTSTRAP_PORT, appBootstrap);
-    bootstrap_port = appBootstrap;
 }
 
 void destroyReceivePort(mach_port_t port)
@@ -263,7 +267,7 @@ void destroyReceivePort(mach_port_t port)
 
 std::optional<PendingTaskPortRequest> sendAppTaskPortRequest()
 {
-    auto handshakePort = getInheritedHandshakePort();
+    auto handshakePort = takeInheritedHandshakePort();
     auto exceptionPort = allocateReceivePort();
     auto replyPort = allocateReceivePort();
 
@@ -287,7 +291,6 @@ std::optional<HandlerMachPorts>
         return std::nullopt;
     }
 
-    restoreBootstrapPort(reply->appBootstrap.name);
     return HandlerMachPorts {request.exceptionPort, reply->appTask.name};
 }
 
