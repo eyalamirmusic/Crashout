@@ -1,7 +1,12 @@
 #include "SharedState.h"
 
+#if defined(_WIN32)
+#include <eacp/Core/Utils/WinInclude.h>
+#else
+#include <time.h>
+#endif
+
 #include <algorithm>
-#include <chrono>
 #include <cstring>
 
 namespace eacp::CrashReporting::Detail
@@ -80,13 +85,21 @@ void initialiseSharedState(SharedState& state, std::uint64_t appProcessId)
     state.appProcessId = appProcessId;
 }
 
+#if defined(_WIN32)
 std::uint64_t getSteadyMilliseconds()
 {
-    auto sinceEpoch = std::chrono::steady_clock::now().time_since_epoch();
-    auto milliseconds =
-        std::chrono::duration_cast<std::chrono::milliseconds>(sinceEpoch);
-    return static_cast<std::uint64_t>(milliseconds.count());
+    constexpr auto interruptTicksPerMillisecond = ULONGLONG {10000};
+    auto ticks = ULONGLONG {0};
+    ::QueryUnbiasedInterruptTime(&ticks);
+    return ticks / interruptTicksPerMillisecond;
 }
+#else
+std::uint64_t getSteadyMilliseconds()
+{
+    constexpr auto nanosecondsPerMillisecond = std::uint64_t {1000000};
+    return ::clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / nanosecondsPerMillisecond;
+}
+#endif
 
 std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 const SharedWatchedThread& thread,
@@ -97,9 +110,11 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
     auto heartbeat =
         thread.lastHeartbeatMilliseconds.load(std::memory_order_acquire);
     auto isPaused = thread.pauseDepth.load(std::memory_order_acquire) > 0;
+    auto isWaiting = thread.waitingForEvents.load(std::memory_order_acquire) != 0;
     auto threshold = hang.thresholdMilliseconds;
 
-    if (!isLive || heartbeat == 0 || isPaused || threshold == 0 || now < heartbeat)
+    if (!isLive || heartbeat == 0 || isPaused || isWaiting || threshold == 0
+        || now < heartbeat)
         return 0;
 
     auto silence = now - heartbeat;
@@ -125,6 +140,7 @@ std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
 
         thread.generation.fetch_add(1, std::memory_order_acq_rel);
         thread.pauseDepth.store(0, std::memory_order_relaxed);
+        thread.waitingForEvents.store(0, std::memory_order_relaxed);
         thread.lastHeartbeatMilliseconds.store(0, std::memory_order_relaxed);
         thread.threadId = threadId;
         copyBoundedText(thread.name, name);
@@ -139,6 +155,7 @@ void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId)
 {
     auto& thread = hang.threads[mainThreadSlot];
     thread.generation.fetch_add(1, std::memory_order_acq_rel);
+    thread.waitingForEvents.store(0, std::memory_order_relaxed);
     thread.threadId = threadId;
     copyBoundedText(thread.name, mainThreadName);
     thread.status.store(watchedThreadLive, std::memory_order_release);
@@ -172,6 +189,17 @@ void sendWatchedThreadHeartbeat(SharedWatchedThread& thread)
 void pauseWatchedThread(SharedWatchedThread& thread)
 {
     thread.pauseDepth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void beginWaitingForEvents(SharedWatchedThread& thread)
+{
+    thread.waitingForEvents.store(1, std::memory_order_release);
+}
+
+void endWaitingForEvents(SharedWatchedThread& thread)
+{
+    sendWatchedThreadHeartbeat(thread);
+    thread.waitingForEvents.store(0, std::memory_order_release);
 }
 
 void resumeWatchedThread(SharedWatchedThread& thread)

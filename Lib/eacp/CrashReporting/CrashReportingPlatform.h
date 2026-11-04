@@ -81,6 +81,11 @@ int runHandlerProcess(const HandlerArguments& arguments);
 void startHangWatchdog(SharedState& state);
 void stopHangWatchdog();
 
+// Marks `thread` waiting while the calling thread's run loop blocks for its
+// next event (macOS); nothing on Windows. One thread at a time.
+void observeEventWaitsOnCurrentThread(SharedWatchedThread& thread);
+void stopObservingEventWaits();
+
 // The calling thread's stack, symbolised in the app, its innermost
 // `framesToSkip` frames left out.
 Vector<StackFrame> captureCurrentStack(int framesToSkip);

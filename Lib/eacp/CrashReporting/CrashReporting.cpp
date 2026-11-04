@@ -286,6 +286,7 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
         Detail::setReleasesWatchOnThreadEnd(true);
     }
 
+    Detail::observeEventWaitsOnCurrentThread(getMainThreadWatch(hang));
     Detail::startHangWatchdog(state);
 }
 
@@ -420,6 +421,7 @@ void stop()
         return;
 
     Detail::stopHangWatchdog();
+    Detail::stopObservingEventWaits();
     session.heartbeatRunning = false;
     session.workerThreadsWatched = false;
     Detail::setReleasesWatchOnThreadEnd(false);

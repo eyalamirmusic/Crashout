@@ -23,7 +23,10 @@ main thread's, from a timer on its loop, and any thread's that calls
 `CrashReporting::sendHeartbeat()`, which claims it a slot on its first call
 (found again through a thread-local) and is freed when the thread ends through
 the same per-thread hook as stack-overflow reporting; Core knows nothing of
-it. They share one 32-slot table in the shared block, and threads silent in the same check, a deadlock, are one
+it. Silence is measured on a clock that stops while the machine sleeps
+(`CLOCK_UPTIME_RAW`, `QueryUnbiasedInterruptTime`), and on macOS a run-loop
+observer marks the main thread idle while its loop waits for the next event, so
+a heartbeat that App Nap holds back is not a hang. They share one 32-slot table in the shared block, and threads silent in the same check, a deadlock, are one
 `kind: "hang"` report with `threadName` and `stalledThreads`.
 `Apps/CrashReporting/SelfDestruct` crashes
 itself and says on each button what the report will be; `CrashReportingTests`

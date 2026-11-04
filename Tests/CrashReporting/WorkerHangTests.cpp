@@ -74,6 +74,35 @@ auto tSilentThreadIsReportedOnce =
     check(takeNewStalls(state->hang, tracker, nextHeartbeat + overdue).size() == 1);
 };
 
+auto tThreadWaitingForEventsIsNotReported =
+    test("CrashReport/workerHangThreadWaitingForEventsIsNotReported") = []
+{
+    constexpr auto heartbeatStarvedFor = 100 * overdue;
+    auto state = createWatchedState();
+    auto& thread = claimAt(state->hang, "encoder", heartbeatTime);
+    auto tracker = StallTracker {};
+
+    beginWaitingForEvents(thread);
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + heartbeatStarvedFor)
+              .empty());
+};
+
+auto tThreadDoneWaitingIsSilentFromItsWake =
+    test("CrashReport/workerHangThreadDoneWaitingIsSilentFromItsWake") = []
+{
+    auto state = createWatchedState();
+    auto& thread = claimAt(state->hang, "encoder", heartbeatTime);
+    auto tracker = StallTracker {};
+
+    beginWaitingForEvents(thread);
+    endWaitingForEvents(thread);
+    auto wake = thread.lastHeartbeatMilliseconds.load();
+
+    check(wake >= heartbeatTime);
+    check(takeNewStalls(state->hang, tracker, wake + overdue - 1).empty());
+    check(takeNewStalls(state->hang, tracker, wake + overdue).size() == 1);
+};
+
 auto tPausedThreadIsNotReported =
     test("CrashReport/workerHangPausedThreadIsNotReported") = []
 {
