@@ -23,7 +23,6 @@ namespace EventWaitsTests
 {
 constexpr auto testThreshold = std::uint64_t {500};
 constexpr auto testPollInterval = std::uint64_t {100};
-constexpr auto heartbeatStarvedFor = std::uint64_t {600000};
 constexpr auto stateChangeWaitLimit = Time::MS {5000};
 constexpr auto stateChangePollInterval = Time::MS {1};
 constexpr auto clockAgreementMilliseconds = std::uint64_t {50};
@@ -82,6 +81,9 @@ bool waitUntil(Condition condition)
     return condition();
 }
 
+#if defined(__APPLE__)
+constexpr auto heartbeatStarvedFor = std::uint64_t {600000};
+
 bool isStallReportedLongAfterLastHeartbeat(const SharedHangInfo& hang)
 {
     auto tracker = StallTracker {};
@@ -89,7 +91,6 @@ bool isStallReportedLongAfterLastHeartbeat(const SharedHangInfo& hang)
     return !takeNewStalls(hang, tracker, heartbeat + heartbeatStarvedFor).empty();
 }
 
-#if defined(__APPLE__)
 constexpr auto farFuture = CFTimeInterval {1.0e9};
 
 // A run loop thread standing in for the main thread: its loop runs the observer
@@ -163,6 +164,85 @@ auto tBusyThreadIsReported = test("EventWaits/busyThreadIsReported") = []
     check(waitUntil([&] { return busy.load(); }));
     check(watched.waitingForEvents == 0);
     check(isStallReportedLongAfterLastHeartbeat(state->hang));
+    release = true;
+};
+#else
+// A message-loop thread standing in for the main thread: `work` runs on it,
+// then it parks in GetMessage until told to quit.
+struct MessageLoopThread
+{
+    template <typename Work>
+    explicit MessageLoopThread(Work work)
+        : thread([this, work] { run(work); })
+    {
+    }
+
+    ~MessageLoopThread()
+    {
+        waitUntil([this] { return threadId.load() != 0; });
+        ::PostThreadMessageW(threadId.load(), WM_QUIT, 0, 0);
+        thread.join();
+    }
+
+    template <typename Work>
+    void run(Work work)
+    {
+        auto message = MSG {};
+        ::PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
+        threadId = ::GetCurrentThreadId();
+        work();
+
+        while (::GetMessageW(&message, nullptr, 0, 0) > 0)
+            ::DispatchMessageW(&message);
+    }
+
+    std::atomic<DWORD> threadId {0};
+    std::thread thread;
+};
+
+constexpr auto silenceBeforeCheck = 10 * testThreshold;
+
+bool isStallReportedAfterHandlerCheck(SharedHangInfo& hang)
+{
+    auto& watched = hang.threads[mainThreadSlot];
+    auto now = getSteadyMilliseconds();
+    watched.lastHeartbeatMilliseconds = now - silenceBeforeCheck;
+    heartbeatMainThreadWhileWaitingForMessages(hang, now);
+    auto tracker = StallTracker {};
+    return !takeNewStalls(hang, tracker, getSteadyMilliseconds()).empty();
+}
+
+auto tIdleThreadWithStarvedHeartbeatIsNotReported =
+    test("EventWaits/idleThreadWithStarvedHeartbeatIsNotReported") = []
+{
+    auto state = createWatchedState();
+    auto loop = MessageLoopThread {[] {}};
+
+    check(waitUntil(
+        [&]
+        {
+            auto id = loop.threadId.load();
+            return id != 0 && isThreadWaitingForWindowMessages(id);
+        }));
+    watchMainThread(state->hang, loop.threadId.load());
+    check(!isStallReportedAfterHandlerCheck(state->hang));
+};
+
+auto tBusyThreadIsReported = test("EventWaits/busyThreadIsReported") = []
+{
+    auto state = createWatchedState();
+    auto busy = std::atomic<bool> {false};
+    auto release = std::atomic<bool> {false};
+    auto loop = MessageLoopThread {[&]
+                                   {
+                                       busy = true;
+                                       waitUntil([&] { return release.load(); });
+                                   }};
+
+    check(waitUntil([&] { return busy.load(); }));
+    watchMainThread(state->hang, loop.threadId.load());
+    check(!isThreadWaitingForWindowMessages(loop.threadId.load()));
+    check(isStallReportedAfterHandlerCheck(state->hang));
     release = true;
 };
 #endif
