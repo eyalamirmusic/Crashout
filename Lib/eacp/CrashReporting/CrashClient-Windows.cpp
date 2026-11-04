@@ -40,6 +40,8 @@ constexpr auto reportedCrashExitCode = UINT {3};
 // A code of eacp's own for a crash that is not a structured exception, so the
 // handler has an EXCEPTION_POINTERS to walk for abort() and its kind too.
 constexpr auto softwareCrashExceptionCode = DWORD {0xE0EAC000};
+constexpr auto heapCorruptionExceptionCode = DWORD {0xC0000374};
+constexpr auto callVectoredHandlerFirst = ULONG {1};
 
 struct WindowsCrashClient
 {
@@ -50,6 +52,7 @@ struct WindowsCrashClient
     std::atomic<bool> isCrashing {false};
 
     LPTOP_LEVEL_EXCEPTION_FILTER previousExceptionFilter = nullptr;
+    PVOID heapCorruptionHandler = nullptr;
     _invalid_parameter_handler previousInvalidParameterHandler = nullptr;
     _purecall_handler previousPureCallHandler = nullptr;
     _crt_signal_t previousAbortHandler = SIG_DFL;
@@ -235,6 +238,16 @@ LONG WINAPI handleUnhandledException(EXCEPTION_POINTERS* pointers)
 
     handOverToHandler(*pointers);
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// ntdll skips the unhandled filter on heap corruption; WER skips it outside a
+// desktop session.
+LONG WINAPI handleHeapCorruption(EXCEPTION_POINTERS* pointers)
+{
+    if (pointers->ExceptionRecord->ExceptionCode == heapCorruptionExceptionCode)
+        handOverToHandler(*pointers);
+
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 void recordCurrentException()
@@ -591,6 +604,8 @@ void installCrashHandlers(SharedState& state)
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     client.previousExceptionFilter =
         ::SetUnhandledExceptionFilter(&handleUnhandledException);
+    client.heapCorruptionHandler = ::AddVectoredExceptionHandler(
+        callVectoredHandlerFirst, &handleHeapCorruption);
     client.previousInvalidParameterHandler =
         _set_invalid_parameter_handler(&handleInvalidParameter);
     client.previousPureCallHandler = _set_purecall_handler(&handlePureVirtualCall);
@@ -605,6 +620,13 @@ void uninstallCrashHandlers()
     auto& client = getWindowsCrashClient();
     unregisterWerModule();
     ::SetUnhandledExceptionFilter(client.previousExceptionFilter);
+
+    if (client.heapCorruptionHandler != nullptr)
+    {
+        ::RemoveVectoredExceptionHandler(client.heapCorruptionHandler);
+        client.heapCorruptionHandler = nullptr;
+    }
+
     _set_invalid_parameter_handler(client.previousInvalidParameterHandler);
     _set_purecall_handler(client.previousPureCallHandler);
     std::signal(SIGABRT, client.previousAbortHandler);
