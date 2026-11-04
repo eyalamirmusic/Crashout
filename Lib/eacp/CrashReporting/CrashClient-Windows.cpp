@@ -13,6 +13,7 @@
 
 #include <werapi.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <csignal>
@@ -87,6 +88,36 @@ std::uint64_t getFaultAddress(const EXCEPTION_RECORD& record)
     return reinterpret_cast<std::uintptr_t>(record.ExceptionAddress);
 }
 
+std::uint64_t getInstructionPointer(const CONTEXT& context)
+{
+#if defined(_M_ARM64)
+    return context.Pc;
+#else
+    return context.Rip;
+#endif
+}
+
+// The handler process's StackWalk64 cannot unwind an x64 app's ARM64EC system
+// DLLs on Windows on ARM, but this thread's own unwinder can, so the stack is
+// captured here and trimmed to start at the faulting instruction.
+void recordFaultingThreadFrames(SharedCrashInfo& crash, const CONTEXT& context)
+{
+    auto addresses = std::array<void*, maxCrashFrames> {};
+    auto count = ::RtlCaptureStackBackTrace(
+        0, static_cast<DWORD>(addresses.size()), addresses.data(), nullptr);
+    auto faultingAddress = getInstructionPointer(context);
+    auto faultingFrame = std::find_if(
+        addresses.begin(),
+        addresses.begin() + count,
+        [faultingAddress](void* address)
+        { return reinterpret_cast<std::uintptr_t>(address) == faultingAddress; });
+
+    crash.frameCount = 0;
+
+    for (auto frame = faultingFrame; frame != addresses.begin() + count; ++frame)
+        crash.frames[crash.frameCount++] = reinterpret_cast<std::uintptr_t>(*frame);
+}
+
 void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
 {
     const auto& record = *pointers.ExceptionRecord;
@@ -100,6 +131,7 @@ void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
     crash.faultAddress = getFaultAddress(record);
     crash.threadId = ::GetCurrentThreadId();
     crash.exceptionPointersAddress = reinterpret_cast<std::uintptr_t>(&pointers);
+    recordFaultingThreadFrames(crash, *pointers.ContextRecord);
 }
 
 bool isHandlerProcessAlive(const WindowsCrashClient& client)

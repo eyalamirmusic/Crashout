@@ -7,6 +7,7 @@
 
 #include <dbghelp.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <optional>
@@ -309,10 +310,28 @@ Vector<std::uint64_t> walkLiveThreadContext(HANDLE process, HANDLE thread)
 }
 #endif
 
-Vector<std::uint64_t>
-    walkCrashedThreadAddresses(HANDLE process, HANDLE thread, const CONTEXT& context)
+Vector<std::uint64_t> getFramesRecordedByApp(const SharedCrashInfo& crash)
+{
+    auto addresses = Vector<std::uint64_t> {};
+    auto count =
+        std::min(static_cast<std::size_t>(crash.frameCount), maxCrashFrames);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+        addresses.add(crash.frames[index]);
+
+    return addresses;
+}
+
+Vector<std::uint64_t> walkCrashedThreadAddresses(HANDLE process,
+                                                 HANDLE thread,
+                                                 const CONTEXT& context,
+                                                 const SharedCrashInfo& crash)
 {
     auto addresses = walkThreadAddresses(process, thread, context);
+    auto recordedByApp = getFramesRecordedByApp(crash);
+
+    if (recordedByApp.size() > addresses.size())
+        addresses = std::move(recordedByApp);
 #if defined(_M_ARM64)
     if (addresses.size() <= 1)
     {
@@ -336,8 +355,8 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
         return frames;
 
     initialiseSymbols(process);
-    frames = makeReportFrames(process,
-                              walkCrashedThreadAddresses(process, thread, *context));
+    frames = makeReportFrames(
+        process, walkCrashedThreadAddresses(process, thread, *context, crash));
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
