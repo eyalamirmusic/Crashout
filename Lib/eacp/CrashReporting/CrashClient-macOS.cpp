@@ -442,8 +442,11 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
     ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
 
     if (handshake)
-        ::posix_spawnattr_setspecialport_np(
-            &attributes, handshake->receiveRight, TASK_BOOTSTRAP_PORT);
+        ::posix_spawnattr_setexceptionports_np(&attributes,
+                                               handshakeCarrierExceptionMask,
+                                               handshake->receiveRight,
+                                               EXCEPTION_DEFAULT,
+                                               THREAD_STATE_NONE);
 
     auto processId = pid_t {};
     auto result = ::posix_spawn(&processId,
@@ -604,9 +607,7 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     ::close(crashPipe->readEnd);
     ::close(readyPipe->writeEnd);
 
-    // Answered before the ready byte is read: until the handler has its real
-    // bootstrap port back, its runtime's own lookups land on this port too,
-    // and are dropped here rather than left to block it.
+    // Answered before the ready byte is read: the handler asks first.
     if (spawned && handshake)
         client.isMachCaptureActive =
             answerHandshakeWithTaskPort(*handshake, launch.startTimeout);
