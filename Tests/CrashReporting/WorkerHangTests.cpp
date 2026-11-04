@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
+#include <eacp/CrashReporting/CrashReportingPlatform.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
 #include <eacp/CrashReporting/SharedState.h>
 
@@ -122,6 +123,20 @@ auto tThreadsStalledTogetherAreOneReport =
 
     auto stalls = takeNewStalls(state->hang, tracker, heartbeatTime + overdue);
     check(stalls.size() == 2);
+};
+
+auto tHangReportLastsAsLongAsItsLongestStall =
+    test("CrashReport/workerHangReportLastsAsLongAsItsLongestStall") = []
+{
+    constexpr auto companionStall = overdue - testPollInterval / 4;
+    auto state = createWatchedState();
+    state->hang.stalled[0].durationMilliseconds = companionStall;
+    state->hang.stalled[1].durationMilliseconds = overdue;
+    state->hang.stalledCount = 2;
+    auto database = eacp::TemporaryFile {};
+
+    auto report = beginHangReport(ReportDatabase {database.path()}, *state);
+    check(report.hangDurationMilliseconds == overdue);
 };
 
 auto tHealthyThreadIsNotTakenAlong =
