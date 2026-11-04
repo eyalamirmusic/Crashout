@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Threads/Thread.h>
 #include <eacp/Core/Utils/Singleton.h>
+#include <eacp/CrashReporting/CrashReporting.h>
 
 #include <array>
 #include <atomic>
@@ -207,6 +208,7 @@ DeadlockedLocks& createDeadlockedLocks()
 } // namespace
 
 // Each caller holds one lock and waits for the other, once both hold theirs.
+// The heartbeat after the barrier makes both fall silent together: one report.
 EACP_FAULT_NO_INLINE void lockInOppositeOrder(std::mutex& held,
                                               std::mutex& wanted,
                                               std::atomic<int>& holdingCount)
@@ -218,6 +220,7 @@ EACP_FAULT_NO_INLINE void lockInOppositeOrder(std::mutex& held,
     while (holdingCount.load() < lockHolders)
         std::this_thread::yield();
 
+    sendHeartbeat();
     auto wantedLock = std::lock_guard {wanted};
 }
 

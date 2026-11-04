@@ -84,6 +84,17 @@ std::string describeStalledThreads(const Vector<CrashedThread>& threads)
     auto noun = threads.size() == 1 ? " thread" : " threads";
     return Strings::join(names, ", ") + noun;
 }
+
+std::uint64_t findLongestStallMilliseconds(const SharedHangInfo& hang,
+                                           std::size_t count)
+{
+    auto longest = std::uint64_t {0};
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+        longest = std::max(longest, hang.stalled[index].durationMilliseconds);
+
+    return longest;
+}
 } // namespace
 
 CrashReport beginHangReport(const ReportDatabase& database, const SharedState& state)
@@ -101,7 +112,7 @@ CrashReport beginHangReport(const ReportDatabase& database, const SharedState& s
         report.stalledThreads.add(thread);
     }
 
-    auto duration = count > 0 ? hang.stalled[0].durationMilliseconds : 0;
+    auto duration = findLongestStallMilliseconds(hang, count);
 
     report.kind = ReportKind::hang;
     report.reason = hangReason;
