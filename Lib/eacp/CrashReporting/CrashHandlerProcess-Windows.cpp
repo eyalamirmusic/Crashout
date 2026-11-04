@@ -467,7 +467,9 @@ void checkForHang(const ReportDatabase& database,
                   StallTracker& tracker)
 {
     auto& hang = connection.state->get().hang;
-    auto stalls = takeNewStalls(hang, tracker, getSteadyMilliseconds());
+    auto now = getSteadyMilliseconds();
+    heartbeatMainThreadWhileWaitingForMessages(hang, now);
+    auto stalls = takeNewStalls(hang, tracker, now);
 
     if (stalls.empty() || isDebuggerAttachedTo(connection.appProcess))
         return;

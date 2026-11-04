@@ -86,6 +86,16 @@ void stopHangWatchdog();
 void observeEventWaitsOnCurrentThread(SharedWatchedThread& thread);
 void stopObservingEventWaits();
 
+#if defined(_WIN32)
+// Whether the thread is parked in the kernel waiting for window messages.
+bool isThreadWaitingForWindowMessages(std::uint64_t threadId);
+
+// The handler's Windows counterpart of the run-loop observers: a stalled main
+// thread found parked waiting for messages is idle, so it gets a heartbeat.
+void heartbeatMainThreadWhileWaitingForMessages(SharedHangInfo& hang,
+                                                std::uint64_t now);
+#endif
+
 // The calling thread's stack, symbolised in the app, its innermost
 // `framesToSkip` frames left out.
 Vector<StackFrame> captureCurrentStack(int framesToSkip);

@@ -49,10 +49,11 @@ elseif (WIN32)
             CppExceptions-Windows.cpp
             CrashHandlerProcess-Windows.cpp
             EventStack-Windows.cpp
+            EventWaits-Windows.cpp
             ExceptionNames-Windows.cpp
             ThreadHooks-Windows.cpp
             SymbolNames-Windows.cpp)
-    target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
+    target_link_libraries(eacp-crash-reporting PRIVATE dbghelp ntdll)
     add_subdirectory(WindowsErrorReporting)
 endif ()
 
