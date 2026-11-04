@@ -704,6 +704,8 @@ void setCurrentThreadName(std::string_view name)
 // The handler process watches the heartbeat and samples from outside.
 void startHangWatchdog(SharedState&) {}
 void stopHangWatchdog() {}
+void observeEventWaitsOnCurrentThread(SharedWatchedThread&) {}
+void stopObservingEventWaits() {}
 void recordThreadForSampling(SharedWatchedThread&) {}
 
 } // namespace eacp::CrashReporting::Detail

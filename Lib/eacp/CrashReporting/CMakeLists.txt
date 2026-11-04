@@ -30,6 +30,7 @@ if (APPLE)
             ThreadHooks-macOS.cpp
             CrashHandlerProcess-macOS.cpp
             EventStack-macOS.cpp
+            EventWaits-macOS.cpp
             HangWatchdog-macOS.cpp
             LoadedLibrarySymbolReader-macOS.cpp
             MachExceptionMessage-macOS.cpp
@@ -40,7 +41,8 @@ if (APPLE)
             TaskPortHandshake-macOS.cpp
             ThrowSites-macOS.cpp
             UncaughtExceptions-macOS.mm)
-    target_link_libraries(eacp-crash-reporting PRIVATE "-framework Foundation")
+    target_link_libraries(eacp-crash-reporting PRIVATE "-framework Foundation"
+            "-framework CoreFoundation")
 elseif (WIN32)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-Windows.cpp

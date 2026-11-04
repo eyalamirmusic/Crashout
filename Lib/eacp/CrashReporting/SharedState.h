@@ -19,7 +19,7 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {7};
+constexpr auto sharedStateVersion = std::uint32_t {8};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
 constexpr auto maxBreadcrumbs = std::size_t {64};
@@ -139,6 +139,10 @@ struct SharedWatchedThread
     // Nothing is reported while above 0.
     std::atomic<std::uint32_t> pauseDepth;
 
+    // 1 while the thread's event loop is blocked waiting for its next event:
+    // idle, not hung, however long since its last heartbeat.
+    std::atomic<std::uint32_t> waitingForEvents;
+
     std::uint64_t threadId;
     BoundedText<maxThreadNameLength> name;
 
@@ -232,11 +236,13 @@ User readSharedUser(const SharedState& state);
 // Oldest first.
 Vector<Breadcrumb> readSharedBreadcrumbs(const SharedState& state);
 
-// The steady clock the heartbeat is measured on, in milliseconds.
+// The clock the heartbeat is measured on, in milliseconds. It stops while the
+// machine sleeps, so a sleep is never counted as a stall.
 std::uint64_t getSteadyMilliseconds();
 
 // How long the thread has been silent when that is a hang to report: the slot
-// is live and has sent a heartbeat, detection is on and not paused, and the silence is
+// is live and has sent a heartbeat, detection is on, it is neither paused nor
+// waiting for events, and the silence is
 // at least `grace` past the threshold. 0 otherwise.
 std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 const SharedWatchedThread& thread,
@@ -256,6 +262,12 @@ void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId);
 void releaseWatchedThread(SharedWatchedThread& thread);
 void sendWatchedThreadHeartbeat(SharedWatchedThread& thread);
 void pauseWatchedThread(SharedWatchedThread& thread);
+
+void beginWaitingForEvents(SharedWatchedThread& thread);
+
+// Sends a heartbeat before clearing the wait, so a watcher never sees the
+// thread awake with the silence of its wait.
+void endWaitingForEvents(SharedWatchedThread& thread);
 
 // Undoes one pause; the silence is then measured afresh, from a heartbeat.
 void resumeWatchedThread(SharedWatchedThread& thread);
