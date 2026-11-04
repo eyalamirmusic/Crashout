@@ -421,7 +421,7 @@ std::uint32_t readWerModuleProtocolVersion(const std::wstring& modulePath)
 }
 
 // Windows Error Reporting (WER) loads only a helper DLL listed in the registry;
-// without the entry, __fastfail and heap corruption are still reported, but
+// without the entry, __fastfail is still reported, but
 // from the exit code alone, with no stack.
 void registerWerModule(SharedState& state)
 {
@@ -436,8 +436,7 @@ void registerWerModule(SharedState& state)
     {
         LOG("CrashReporting: ",
             Strings::narrow(modulePath),
-            " does not exist, so __fastfail and heap corruption are reported "
-            "without a stack");
+            " does not exist, so __fastfail is reported without a stack");
         return;
     }
 
@@ -447,7 +446,7 @@ void registerWerModule(SharedState& state)
             Strings::narrow(modulePath),
             " is not listed under HKLM or HKCU\\",
             Strings::narrow(werHelperModulesKey),
-            ", so __fastfail and heap corruption are reported without a stack");
+            ", so __fastfail is reported without a stack");
         return;
     }
 
@@ -461,8 +460,8 @@ void registerWerModule(SharedState& state)
             moduleVersion,
             ", not ",
             client.requiredWerProtocolVersion,
-            ", so it is not registered and __fastfail and heap corruption are "
-            "reported without a stack");
+            ", so it is not registered and __fastfail is reported "
+            "without a stack");
         return;
     }
 

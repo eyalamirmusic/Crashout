@@ -51,8 +51,7 @@ back with `ReportDatabase`.
 build its symbols (a `.dSYM` on macOS, a PDB on Windows), copied to
 `SYMBOLS_DIR` as `<target>-<version>` when one is given. On Windows it copies
 `eacp-windows-error-reporting-helper.dll` beside the executable, so fast-fail
-and heap-corruption crashes, which no in-process handler sees, still get a
-stack.
+crashes, which no in-process handler sees, still get a stack.
 
 `Apps/CrashReporting/SelfDestruct` is a window whose buttons crash it in every
 supported way and show the report. `Docs/CrashReporting.md` covers how it
