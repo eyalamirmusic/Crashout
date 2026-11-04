@@ -1,5 +1,6 @@
 #include "ExceptionNames-Windows.h"
 #include "CppExceptions-Windows.h"
+#include "CrashReport.h"
 
 #include <array>
 
@@ -10,6 +11,19 @@ namespace
 constexpr auto heapCorruptionCode = DWORD {0xC0000374};
 constexpr auto stackBufferOverrunCode = DWORD {0xC0000409};
 constexpr auto floatMultipleTrapsCode = DWORD {0xC00002B5};
+constexpr auto accessViolationParameterCount = DWORD {2};
+
+struct AccessViolationKind
+{
+    ULONG_PTR operation;
+    std::string_view description;
+};
+
+constexpr auto accessViolationKinds = std::to_array<AccessViolationKind>({
+    {EXCEPTION_READ_FAULT, "read of address "},
+    {EXCEPTION_WRITE_FAULT, "write to address "},
+    {EXCEPTION_EXECUTE_FAULT, "execute at "},
+});
 
 struct ExceptionName
 {
@@ -52,5 +66,25 @@ std::optional<std::string_view> findExceptionName(DWORD code)
     }
 
     return std::nullopt;
+}
+
+std::optional<std::string> describeAccessViolation(const EXCEPTION_RECORD& record)
+{
+    if (record.ExceptionCode != EXCEPTION_ACCESS_VIOLATION
+        || record.NumberParameters < accessViolationParameterCount)
+    {
+        return std::nullopt;
+    }
+
+    const auto operation = record.ExceptionInformation[0];
+    const auto address = record.ExceptionInformation[1];
+
+    for (const auto& kind: accessViolationKinds)
+    {
+        if (kind.operation == operation)
+            return std::string {kind.description} + formatHexAddress(address);
+    }
+
+    return "access of address " + formatHexAddress(address);
 }
 } // namespace eacp::CrashReporting::Detail
